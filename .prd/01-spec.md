@@ -139,3 +139,35 @@ tts.dispose();
 - **`src/karaoke.js`:** `karaoke(target, playback, { mode: 'captions'|'inplace' }) → { destroy() }`.
 - **`src/index.js`:** `createTTS(opts) → TTS`; wires the pieces together; `read(el)` = segment(el.textContent) + karaoke inplace.
 
+
+## R1 amendments (external spec review, 2026-10-14: REJECT ×4 → these become part of the contract)
+- **A1 Deployment contract.**
+  - **CDN mode** (default URLs) needs this CSP: `script-src 'self' https://cdn.jsdelivr.net 'wasm-unsafe-eval'; worker-src 'self' blob:; connect-src 'self' https://huggingface.co https://*.hf.co https://cdn.jsdelivr.net`. The blob shim is needed only when the library module itself is cross-origin.
+  - **Self-host mode** keeps everything same-origin:
+    - `workerUrl` = your copy of `src/worker.js`;
+    - `runtimeUrl` = your copy of onnxruntime-web 1.30.0 `dist/` (`ort.webgpu.min.mjs` + `ort-wasm-simd-threaded.asyncify.{mjs,wasm}`);
+    - `modelUrl` = your copy of the 6 model files;
+    - `voice` = your URL.
+    - Its CSP is `script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'`.
+    - A script `npx github:2lab-ai/tts mirror <dir>` downloads and verifies (sha256) the runtime and model files into `<dir>`.
+  - Bundlers: Vite and webpack 5 handle `new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })`.
+  - A worker that fails to start (CSP or 404) is an `error` status with the reason. It is never a hang.
+- **A2 Cache is best-effort.**
+  - Cache Storage missing or throwing → no cache; status reports `cache: 'off'`.
+  - A `cache.put` failure (quota) is non-fatal: the verified bytes are used, and the status reports `cache: 'partial'`.
+  - Every file read from the cache is re-verified (sha256). A mismatch or a missing entry → re-download that file only.
+  - Tests: storage denied; quota error on the 3rd file; a cache holding 4 of 6 files plus one corrupted entry → recovers with 3 downloads.
+- **A3 Playback clock.**
+  - Chunk scheduled start = `max(previousEnd + 0.3, ctx.currentTime + 0.05)`. All word and sentence times derive from the actual scheduled start.
+  - The caption clock = `ctx.currentTime − (ctx.outputLatency || ctx.baseLatency || 0) + lead`.
+  - pause = `ctx.suspend()` (the clock freezes); resume = `ctx.resume()`.
+  - On an underrun, status is `buffering` until the next chunk is scheduled; no audio is skipped or replayed.
+  - E3 browser test: a slow fake engine forces an underrun → buffering → recovery. The caption word at each sample instant must equal the word whose audio is playing (from the scheduled starts); also checked across pause/resume.
+- **A4 Audio unlock and error delivery.**
+  - `speak()` and `read()` create or resume the shared AudioContext synchronously, before any `await`.
+  - If the context is not `running` after `resume()` → playback state `blocked`; the next user gesture calls `p.resume()` to retry.
+  - Status union: `idle | loading | ready | buffering | blocked | error`.
+  - `preload()` returns a Promise that rejects on error.
+  - `p.done` rejects on any engine, worker or model error after the status turns `error`.
+  - Tests: a cold-load gesture (speak before preload) plays; denied unlock → `blocked` → resume plays; a failed worker start → status error and `p.done` rejects.
+- **Smoke matrix** (added to E1/E2): plain CDN ESM page with the CDN-mode CSP; Vite build; webpack 5 build; self-host page with the strict CSP. Each must speak one sentence with captions.
