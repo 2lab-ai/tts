@@ -190,3 +190,8 @@ tts.dispose();
     - the fallback path, with `getOutputTimestamp` absent and `outputLatency` 0.1, shifts it by 0.1;
     - both values absent → no shift.
   - Acoustic correctness of the word times themselves is E1 (forced alignment), kept separate.
+- **A7 Suspension guard** (spec review R3):
+  - `audibleTime()` applies the `getOutputTimestamp` extrapolation only while `ctx.state === 'running'`. When suspended or paused, it returns the value frozen at the moment suspension completed.
+  - On resume, the first call after `ctx.resume()` resolves takes a fresh output timestamp; the pre-pause timestamp is never extrapolated across the pause.
+  - The extrapolated value never decreases and never runs ahead of `ctx.currentTime`.
+  - Test: hold a pause across ≥ 3 character boundaries of scheduled time. The highlighted char is unchanged throughout, and after resume it continues from the same char without a jump (first post-resume char index − pre-pause index ≤ 1).
