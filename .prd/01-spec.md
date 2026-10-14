@@ -171,3 +171,22 @@ tts.dispose();
   - `p.done` rejects on any engine, worker or model error after the status turns `error`.
   - Tests: a cold-load gesture (speak before preload) plays; denied unlock → `blocked` → resume plays; a failed worker start → status error and `p.done` rejects.
 - **Smoke matrix** (added to E1/E2): plain CDN ESM page with the CDN-mode CSP; Vite build; webpack 5 build; self-host page with the strict CSP. Each must speak one sentence with captions.
+
+## R2 amendments (spec review R2: REJECT ×2 → contract)
+- **A5 Lead is applied exactly once.** This replaces "Word and sentence times = chunk start + charTimes − lead" in §3 and the `+ lead` in A3.
+  - Word and sentence event times are UNSHIFTED audio times: the actual scheduled start of the chunk + charTimes.
+  - Highlighting compares them against `captionClock() = audibleTime() + lead`.
+  - Test: with lead = 0.2 s, the highlighted word at every sampled instant equals the lead = 0 highlight shifted by exactly 0.2 s (not 0.4).
+- **A6 Audible time has one definition, with an independent oracle.**
+  - `audibleTime()`:
+    - When `ctx.getOutputTimestamp` is available: `ts.contextTime + (performance.now() − ts.performanceTime) / 1000`. This is the context time currently reaching the output device, as reported by the browser.
+    - Otherwise: `ctx.currentTime − (ctx.outputLatency || ctx.baseLatency || 0)`.
+  - **E3 oracle** (browser):
+    - At sampled instants the test reads `getOutputTimestamp()` itself and maps it to the chunk/char playing per the scheduled starts.
+    - The library's highlighted char must match within 30 ms. This compares the library clock against the browser's output report, not against the library's own bookkeeping.
+    - It runs across underrun → buffering → recovery and pause/resume.
+  - **Unit tests:**
+    - an injected `getOutputTimestamp` with 200 ms latency shifts the highlight by exactly 200 ms;
+    - the fallback path, with `getOutputTimestamp` absent and `outputLatency` 0.1, shifts it by 0.1;
+    - both values absent → no shift.
+  - Acoustic correctness of the word times themselves is E1 (forced alignment), kept separate.
